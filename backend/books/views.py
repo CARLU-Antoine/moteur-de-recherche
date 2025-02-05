@@ -1,89 +1,55 @@
-from django.http import JsonResponse
-from django.core.exceptions import ObjectDoesNotExist
+from rest_framework import generics
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
 from django.db.models import Q
 from .models import Book, Author
+from .serializers import BookSerializer, AuthorSerializer
 
-def get_books(request):
-    books = Book.objects.select_related('author').only(
-        'id', 'title', 'author__name', 'languages', 'summary',
-        'subjects', 'bookshelves', 'formats', 'media_type',
-        'copyright', 'download_count', 'translators'
-    )
+# Liste des livres
+class BookListView(generics.ListAPIView):
+    queryset = Book.objects.select_related('author')
+    serializer_class = BookSerializer
 
-    books_list = [{
-        'id': book.id,
-        'title': book.title,
-        'author': book.author.name if book.author else "Unknown",
-        'languages': book.languages,
-        'summary': book.summary if book.summary else "No summary provided",
-        'subjects': book.subjects,
-        'bookshelves': book.bookshelves,
-        'formats': book.formats,
-        'media_type': book.media_type if book.media_type else "Unknown",
-        'copyright': book.copyright,
-        'download_count': book.download_count,
-        'translators': book.translators
-    } for book in books]
+# Détail d'un livre
+class BookDetailView(generics.RetrieveAPIView):
+    queryset = Book.objects.select_related('author')
+    serializer_class = BookSerializer
+    lookup_field = 'id'
 
-    return JsonResponse({'books': books_list}, safe=False)
+# Liste des livres en français
+class FrenchBooksView(generics.ListAPIView):
+    queryset = Book.objects.filter(languages__icontains='fr')
+    serializer_class = BookSerializer
 
+# Liste des livres en anglais
+class EnglishBooksView(generics.ListAPIView):
+    queryset = Book.objects.filter(languages__icontains='en')
+    serializer_class = BookSerializer
 
-def get_book(request, book_id):
-    try:
-        book = Book.objects.select_related('author').values(
-            'id', 'title', 'author__name', 'languages', 'summary', 'download_count', 'text'
-        ).get(id=book_id)
-        return JsonResponse(book)
-    except ObjectDoesNotExist:
-        return JsonResponse({'error': 'Livre introuvable.'}, status=404)
+# Récupérer le texte d'un livre
+class BookTextView(APIView):
+    def get(self, request, book_id):
+        try:
+            book = Book.objects.get(id=book_id)
+            if book.text:
+                return Response({'text': book.text.strip()})
+            return Response({'error': 'Texte non disponible.'}, status=status.HTTP_400_BAD_REQUEST)
+        except Book.DoesNotExist:
+            return Response({'error': 'Livre introuvable.'}, status=status.HTTP_404_NOT_FOUND)
 
-def get_french_books(request):
-    books = Book.objects.filter(languages__icontains='fr').values(
-        'id', 'title', 'author__name', 'summary'
-    )
-    return JsonResponse(list(books), safe=False)
+# Recherche d'un mot dans les livres
+class BookSearchView(APIView):
+    def get(self, request):
+        word = request.GET.get('word')
+        if not word:
+            return Response({'error': 'Veuillez fournir un mot clé.'}, status=status.HTTP_400_BAD_REQUEST)
 
-def get_english_books(request):
-    books = Book.objects.filter(languages__icontains='en').values(
-        'id', 'title', 'author__name', 'summary'
-    )
-    return JsonResponse(list(books), safe=False)
+        books_found = Book.objects.filter(
+            Q(text__icontains=word) | Q(summary__icontains=word)
+        ).values('id', 'title', 'languages', 'summary', 'author__name')
 
+        if not books_found:
+            return Response({'message': f'Aucun livre trouvé pour "{word}".'}, status=status.HTTP_404_NOT_FOUND)
 
-def fetch_book_text(request, book_id):
-    try:
-        book = Book.objects.get(id=book_id)
-        if book.text:
-            return JsonResponse({'text': book.text.strip()})
-        else:
-            return JsonResponse({'error': 'Texte non disponible pour ce livre.'}, status=400)
-    except ObjectDoesNotExist:
-        return JsonResponse({'error': 'Livre introuvable.'}, status=404)
-    
-    
-def search(request):
-    word = request.GET.get('word')
-
-    if not word:
-        return JsonResponse({'error': 'No word provided for search.'}, status=400)
-
-    # Recherche dans le texte et le résumé des livres
-    books_found = Book.objects.filter(
-        Q(text__icontains=word) | Q(summary__icontains=word)
-    ).values('title', 'summary', 'author__name')
-
-    # Si aucun livre n'est trouvé
-    if not books_found:
-        return JsonResponse({'message': f'No books found for the word "{word}".'}, status=404)
-
-    # Transformer en liste de dictionnaires
-    results = [
-        {
-            'title': book['title'],
-            'author': book['author__name'] if book['author__name'] else "Unknown",
-            'summary': book['summary']
-        }
-        for book in books_found
-    ]
-
-    return JsonResponse({'books': results}, safe=False)
+        return Response({'books': list(books_found)})
