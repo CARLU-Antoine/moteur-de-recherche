@@ -8,7 +8,8 @@ from tqdm import tqdm
 
 GUTENDEX_API = "https://gutendex.com/books/"
 MAX_BOOKS = 1664
-MAX_WORKERS = 20  # Adjust based on your system's capabilities
+MAX_WORKERS = 100  # Adjust based on your system's capabilities
+MIN_WORDS = 10000  # Minimum word count threshold
 
 class Command(BaseCommand):
     help = "Import books from Gutendex API and store them in the database."
@@ -19,12 +20,12 @@ class Command(BaseCommand):
             return None
 
         try:
-            text_response = requests.get(text_url, timeout=10)
+            text_response = requests.get(text_url, timeout=3)
             text_response.raise_for_status()
             text = text_response.text
             
             # Text cleaning
-            text = text.replace("\ufeff", "").replace("\r", "").replace("\n", " ")
+            text = text.replace("\ufeff", "")
             text = re.sub(r"\*\*\* START OF (THE|THIS) PROJECT GUTENBERG.*?\*\*\*", "", text, flags=re.S)
             text = re.sub(r"\*\*\* END OF (THE|THIS) PROJECT GUTENBERG.*?\*\*\*", "", text, flags=re.S)
             
@@ -57,6 +58,15 @@ class Command(BaseCommand):
                         for book, text in zip(books, book_texts):
                             if books_imported >= MAX_BOOKS:
                                 break
+
+                            # Check if the book has more than MIN_WORDS
+                            if text is None:
+                                continue  # Ignore ce livre si le texte est indisponible
+
+                            word_count = len(text.split())
+
+                            if word_count < MIN_WORDS:
+                                continue
 
                             # Handle author
                             authors = book.get('authors', [])
